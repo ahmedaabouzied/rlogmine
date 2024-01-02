@@ -1,9 +1,13 @@
 use colored::Colorize;
 use std::fmt;
+use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::time::{self, Duration};
 
 /// Default maximum distance between two messages in a cluster.
-const DEFAULT_MAX_DIST: f64 = 0.6;
+const DEFAULT_MAX_DIST: f64 = 0.7;
+const DISPLAY_MIN_COUNT: u64 = 1000;
 
+#[derive(Clone, Debug)]
 struct Cluster {
     /// Cluster representative parts message.
     r: Vec<String>,
@@ -77,11 +81,12 @@ impl Cluster {
 
 impl fmt::Display for Cluster {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{} {}", self.count, self.r.join(" "))
+        write!(f, "{}, {}", self.count, self.r.join(" "))
     }
 }
 
 /// A list of clusters.
+#[derive(Clone, Debug)]
 pub struct Clusters {
     list: Vec<Cluster>,
 }
@@ -89,6 +94,9 @@ pub struct Clusters {
 impl fmt::Display for Clusters {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         for cluster in self.list.iter() {
+            if cluster.count < DISPLAY_MIN_COUNT{
+                continue;
+            }
             write!(f, "{}\n", cluster)?;
         }
         Ok(())
@@ -97,8 +105,33 @@ impl fmt::Display for Clusters {
 
 impl Clusters {
     /// Creates a new empty clusters list.
-    pub fn new() -> Self {
+    pub fn new() -> Clusters {
         Clusters { list: Vec::new() }
+    }
+    pub async fn start(
+        &mut self,
+        input_receiver: &mut Receiver<String>,
+        output_sender: Sender<String>,
+    ) {
+        println!("Starting clusterer");
+
+        let output_sender = output_sender.clone();
+        let (watch_sender, watch_receiver) = tokio::sync::watch::channel("".to_string());
+
+        tokio::spawn(async move {
+            println!("Starting display thread");
+            let mut interval = time::interval(Duration::from_secs(10));
+            loop {
+                interval.tick().await;
+                let update = watch_receiver.borrow().clone();
+                output_sender.send(update).await.unwrap();
+            }
+        });
+        while let Some(message) = input_receiver.recv().await {
+            self.process(message);        
+            self.sort();
+            watch_sender.send(self.to_string()).unwrap();
+        }
     }
 
     /// Processes the given message. If the message is within a suitable distance from
