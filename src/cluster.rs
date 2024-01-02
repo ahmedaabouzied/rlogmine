@@ -1,5 +1,5 @@
-use std::fmt;
 use colored::Colorize;
+use std::fmt;
 
 /// Default maximum distance between two messages in a cluster.
 const DEFAULT_MAX_DIST: f64 = 0.6;
@@ -38,6 +38,9 @@ impl Cluster {
             total += self.score((p1i, p2i)) / max as f64;
             if (1.0 - total) < self.max_dist {
                 return 1.0 - total;
+            }
+            if total > self.max_dist {
+                return 1.0;
             }
         }
         1.0 - total
@@ -120,7 +123,11 @@ impl Clusters {
     pub fn print(&mut self) {
         self.sort();
         for cluster in self.list.iter() {
-            println!("{:5} {}", format!("{}", cluster.count).green(), cluster.r.join(" "));
+            println!(
+                "{:5} {}",
+                format!("{}", cluster.count).green(),
+                cluster.r.join(" ")
+            );
         }
     }
 }
@@ -187,7 +194,6 @@ mod tests {
                 i, i, i
             ));
         }
-
 
         let mut logs3 = Vec::new();
         for i in 0..80 {

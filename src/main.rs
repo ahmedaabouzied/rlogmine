@@ -8,6 +8,6 @@ fn main() {
     for line in std::io::stdin().lock().lines() {
         let line = line.unwrap();
         clusters.process(line);
-    }   
+    }
     clusters.print();
 }
