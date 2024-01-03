@@ -27,7 +27,7 @@ Output:
 ## Theory
 *This is 100% based on the [LogMine paper](https://www.cs.unm.edu/~mueen/Papers/LogMine.pdf).*
 
-If we define the distance function `Dist(P, Q)` between two log messages as:
+*If we define the distance function `Dist(P, Q)` between two log messages as:*
 
 $$
 Dist(P, Q) = 1 - \sum_{i=1}^{\min(\text{len}(P),\text{len}(Q))} \frac{\text{Score}(P_i,Q_i)}{\max(\text{len}(P),\text{len}(Q))}
