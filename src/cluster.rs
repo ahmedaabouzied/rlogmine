@@ -131,13 +131,23 @@ impl Clusters {
             loop {
                 interval.tick().await;
                 let update = watch_receiver.borrow().clone();
-                output_sender.send(update).await.unwrap();
+                match output_sender.send(update).await {
+                    Ok(_) => {}
+                    Err(_) => {
+                        break;
+                    }
+                }
             }
         });
         while let Some(message) = input_receiver.recv().await {
             self.process(message);
             self.sort();
-            watch_sender.send(self.to_string()).unwrap();
+            match watch_sender.send(self.to_string()) {
+                Ok(_) => {}
+                Err(_) => {
+                    break;
+                }
+            }
         }
     }
 

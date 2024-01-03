@@ -70,8 +70,8 @@ async fn main() {
     );
 
     // TODO: Asses the ideal capacity of the channels.
-    let (input_sender, mut input_receiver) = mpsc::channel::<String>(100);
-    let (output_sender, mut output_receiver) = mpsc::channel::<String>(100);
+    let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);
+    let (output_sender, mut output_receiver) = mpsc::channel::<String>(10);
 
     // Spawn an async background task for the clusters.
     tokio::spawn(async move {
