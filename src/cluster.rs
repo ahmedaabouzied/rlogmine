@@ -5,7 +5,9 @@ use tokio::time::{self, Duration};
 
 /// Default maximum distance between two messages in a cluster.
 const DEFAULT_MAX_DIST: f64 = 0.7;
-const DISPLAY_MIN_COUNT: u64 = 1000;
+const DISPLAY_MIN_COUNT: u64 = 100;
+const DISPLAY_REFRESH_INTERVAL: u64 = 4;
+const SCREEN_LINES: u64 = 8;
 
 #[derive(Clone, Debug)]
 struct Cluster {
@@ -93,7 +95,7 @@ pub struct Clusters {
 
 impl fmt::Display for Clusters {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for cluster in self.list.iter() {
+        for cluster in self.list.iter().take(SCREEN_LINES as usize) {
             if cluster.count < DISPLAY_MIN_COUNT{
                 continue;
             }
@@ -120,7 +122,7 @@ impl Clusters {
 
         tokio::spawn(async move {
             println!("Starting display thread");
-            let mut interval = time::interval(Duration::from_secs(10));
+            let mut interval = time::interval(Duration::from_secs(DISPLAY_REFRESH_INTERVAL));
             loop {
                 interval.tick().await;
                 let update = watch_receiver.borrow().clone();
