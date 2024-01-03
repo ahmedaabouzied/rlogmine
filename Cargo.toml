@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.79"
 async-channel = "2.1.1"
+clap = { version = "4.4.12", features = ["derive", "string", "env"] }
 colored = "2.1.0"
 crossterm = "0.27.0"
 ratatui = "0.25.0"

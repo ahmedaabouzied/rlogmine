@@ -4,9 +4,6 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::time::{self, Duration};
 
 /// Default maximum distance between two messages in a cluster.
-const DEFAULT_MAX_DIST: f64 = 0.7;
-const DISPLAY_MIN_COUNT: u64 = 100;
-const DISPLAY_REFRESH_INTERVAL: u64 = 4;
 const SCREEN_LINES: u64 = 8;
 
 #[derive(Clone, Debug)]
@@ -23,11 +20,11 @@ struct Cluster {
 
 impl Cluster {
     /// Creates a new cluster with the given parts message.
-    fn new(r: &String) -> Cluster {
+    fn new(r: &String, max_dist: f64) -> Cluster {
         let r = r.split(" ").map(|s| s.to_string()).collect::<Vec<String>>();
         Cluster {
             r: r,
-            max_dist: DEFAULT_MAX_DIST,
+            max_dist,
             count: 1,
         }
     }
@@ -91,12 +88,17 @@ impl fmt::Display for Cluster {
 #[derive(Clone, Debug)]
 pub struct Clusters {
     list: Vec<Cluster>,
+
+    max_dist: f64,
+    min_freq: u64,
+    output_lines: u64,
+    refresh_interval: u64,
 }
 
 impl fmt::Display for Clusters {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for cluster in self.list.iter().take(SCREEN_LINES as usize) {
-            if cluster.count < DISPLAY_MIN_COUNT{
+        for cluster in self.list.iter().take(self.output_lines as usize) {
+            if cluster.count < self.min_freq {
                 continue;
             }
             write!(f, "{}\n", cluster)?;
@@ -107,22 +109,25 @@ impl fmt::Display for Clusters {
 
 impl Clusters {
     /// Creates a new empty clusters list.
-    pub fn new() -> Clusters {
-        Clusters { list: Vec::new() }
+    pub fn new(max_dist: f64, min_freq: u64, output_lines: u64, refresh_interval: u64) -> Clusters {
+        Clusters {
+            list: Vec::new(),
+            max_dist,
+            min_freq,
+            output_lines,
+            refresh_interval,
+        }
     }
     pub async fn start(
         &mut self,
         input_receiver: &mut Receiver<String>,
         output_sender: Sender<String>,
     ) {
-        println!("Starting clusterer");
-
         let output_sender = output_sender.clone();
         let (watch_sender, watch_receiver) = tokio::sync::watch::channel("".to_string());
 
+        let mut interval = time::interval(Duration::from_secs(self.refresh_interval));
         tokio::spawn(async move {
-            println!("Starting display thread");
-            let mut interval = time::interval(Duration::from_secs(DISPLAY_REFRESH_INTERVAL));
             loop {
                 interval.tick().await;
                 let update = watch_receiver.borrow().clone();
@@ -130,7 +135,7 @@ impl Clusters {
             }
         });
         while let Some(message) = input_receiver.recv().await {
-            self.process(message);        
+            self.process(message);
             self.sort();
             watch_sender.send(self.to_string()).unwrap();
         }
@@ -146,24 +151,12 @@ impl Clusters {
         }
         // If we get here, we didn't find a suitable cluster.
         // Create a new one.
-        self.list.push(Cluster::new(&msg));
+        self.list.push(Cluster::new(&msg, self.max_dist));
     }
 
     /// Sorts the clusters by the number of messages in each cluster.
     fn sort(&mut self) {
         self.list.sort_by(|a, b| b.count.cmp(&a.count));
-    }
-
-    /// Prints the clusters output
-    pub fn print(&mut self) {
-        self.sort();
-        for cluster in self.list.iter() {
-            println!(
-                "{:5} {}",
-                format!("{}", cluster.count).green(),
-                cluster.r.join(" ")
-            );
-        }
     }
 }
 
