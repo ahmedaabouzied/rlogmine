@@ -5,6 +5,7 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use std::io::stdout as stdioout;
+use std::process;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio::time::{self, Duration};
@@ -51,90 +52,32 @@ struct Args {
     )]
     output_lines: u64,
 
-    #[clap(
-        short = 'i',
-        long,
-        default_value = "0",
-        help = "Screen output refresh interval in seconds"
-    )]
-    refresh_interval: u64,
+    #[clap(short = 'i', long, help = "Screen output refresh interval in seconds")]
+    refresh_interval: Option<u64>,
+
+    #[clap(short = 'f', long, help = "Read input from a file instead of STDIN")]
+    input_file: Option<String>,
+
+    #[clap(short = 'o', long, help = "Write output to a file instead of STDOUT")]
+    output_file: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let mut clusters =
-        cluster::Clusters::new(args.max_distance, args.min_frequency, args.output_lines);
 
-    // TODO: Asses the ideal capacity of the channels.
-    let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);
-    let (output_sender, mut output_receiver) = mpsc::channel::<String>(10);
-    let (screen_sender, mut screen_receiver) =
-        tokio::sync::watch::channel::<String>("".to_string());
-    let (done_sender, mut done_receiver) = mpsc::channel::<()>(1);
-
-    // Spawn an async background task for the clusters.
-    tokio::spawn(async move {
-        clusters.start(&mut input_receiver, output_sender).await;
-    });
-
-    if args.refresh_interval == 0 {
-        clear_terminal(&args).unwrap();
-        let output = tokio::spawn(async move {
-            let mut latest_output = String::new();
-            while let Some(output) = output_receiver.recv().await {
-                latest_output = output;
+    match args.refresh_interval {
+        Some(interval) => {
+            if interval == 0 {
+                println!("Refresh interval must be greater than 0");
+                process::exit(1);
             }
-            let lines = latest_output.lines();
-            for line in lines {
-                let (freq, msg) = line.split_once(",").unwrap();
-                println!("{} {}", freq.bold().bright_red(), msg);
-            }
-        });
-        // Read lines from STDIN.
-        let mut lines = BufReader::new(io::stdin()).lines();
-        while let Some(line) = lines.next_line().await.unwrap() {
-            input_sender.send(line).await.unwrap();
+            run_with_refresh_interval(&args).await;
         }
-        drop(input_sender);
-        output.await.unwrap();
-        return;
+        None => {
+            run_without_refresh_interval(&args).await;
+        }
     }
-
-    // Spawn a background task to print output to the screen.
-    let screen = tokio::spawn(async move {
-        let args = args.clone();
-        let mut interval = time::interval(Duration::from_secs(args.refresh_interval));
-        loop {
-            interval.tick().await;
-            let message = screen_receiver.borrow_and_update();
-            clear_terminal(&args).unwrap();
-            let lines = message.lines();
-            for line in lines {
-                let (freq, msg) = line.split_once(",").unwrap();
-                println!("{} {}", freq.bold().bright_red(), msg);
-            }
-            if done_receiver.try_recv().is_ok() {
-                break;
-            }
-        }
-    });
-
-    let output_handler = tokio::spawn(async move {
-        while let Some(message) = output_receiver.recv().await {
-            screen_sender.send(message).unwrap();
-        }
-        done_sender.send(()).await.unwrap();
-    });
-
-    // Read lines from STDIN.
-    let mut lines = BufReader::new(io::stdin()).lines();
-    while let Some(line) = lines.next_line().await.unwrap() {
-        input_sender.send(line).await.unwrap();
-    }
-    drop(input_sender);
-    output_handler.await.unwrap();
-    screen.await.unwrap();
 }
 
 /// clear_terminal clears the terminal and print the current execution info as a header of
@@ -149,7 +92,7 @@ fn clear_terminal(args: &Args) -> anyhow::Result<()> {
 
 fn print_header(args: &Args) {
     let max_distance = format!("{:.2}", args.max_distance);
-    let refresh_interval = format!("{}", args.refresh_interval);
+    let refresh_interval = format!("{}", args.refresh_interval.unwrap_or(0));
     let min_frequency = format!("{}", args.min_frequency);
     let output_lines = format!("{}", args.output_lines);
 
@@ -179,4 +122,118 @@ fn print_header(args: &Args) {
         "=== Min frequency displayed".bold().bright_cyan(),
         min_frequency.bold().bright_red()
     );
+}
+
+async fn run_without_refresh_interval(args: &Args) {
+    let mut clusters =
+        cluster::Clusters::new(args.max_distance, args.min_frequency, args.output_lines);
+
+    // TODO: Asses the ideal capacity of the channels.
+    let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);
+    let (output_sender, mut output_receiver) = mpsc::channel::<String>(10);
+    tokio::sync::watch::channel::<String>("".to_string());
+
+    // Spawn an async background task for the clusters.
+    tokio::spawn(async move {
+        clusters.start(&mut input_receiver, output_sender).await;
+    });
+
+    // Clear and print the terminal header.
+    clear_terminal(&args).unwrap();
+
+    // Spawn a background task to receive and print output.
+    let output = tokio::spawn(async move {
+        // Update the latest output every time a new output is received.
+        let mut latest_output = String::new();
+        while let Some(output) = output_receiver.recv().await {
+            latest_output = output;
+        }
+        // All output has been received. Print it.
+        // Each line, split it into frequency and message.
+        // print the frequency in red and the message in white.
+        let lines = latest_output.lines();
+        for line in lines {
+            let (freq, msg) = line.split_once(",").unwrap();
+            println!("{} {}", freq.bold().bright_red(), msg);
+        }
+    });
+
+    // Read lines from STDIN.
+    let mut lines = BufReader::new(io::stdin()).lines();
+    while let Some(line) = lines.next_line().await.unwrap() {
+        input_sender.send(line).await.unwrap();
+    }
+
+    // All input has been received close the input channel.
+    drop(input_sender);
+    // Wait for the output task to finish.
+    output.await.unwrap();
+}
+async fn run_with_refresh_interval(args: &Args) {
+    let mut clusters =
+        cluster::Clusters::new(args.max_distance, args.min_frequency, args.output_lines);
+
+    // TODO: Asses the ideal capacity of the channels.
+    let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);
+    let (output_sender, mut output_receiver) = mpsc::channel::<String>(10);
+    let (screen_sender, mut screen_receiver) =
+        tokio::sync::watch::channel::<String>("".to_string());
+    let (done_sender, mut done_receiver) = mpsc::channel::<()>(1);
+
+    // Spawn an async background task for the clusters.
+    tokio::spawn(async move {
+        clusters.start(&mut input_receiver, output_sender).await;
+    });
+
+    // Spawn a background task to print output to the screen.
+    let args = args.clone();
+    let screen = tokio::spawn(async move {
+        // refresh_interval is not None because we are in the run_with_refresh_interval function.
+        let mut interval = time::interval(Duration::from_secs(args.refresh_interval.unwrap()));
+
+        // Loop and tick every refresh_interval seconds.
+        loop {
+            interval.tick().await;
+
+            // Get the latest output.
+            let message = screen_receiver.borrow_and_update();
+
+            // Clear and print the terminal header.
+            clear_terminal(&args).unwrap();
+
+            // Print the latest output. Each line, split it into frequency and message.
+            // And print the frequency in red and the message in white.
+            let lines = message.lines();
+            for line in lines {
+                let (freq, msg) = line.split_once(",").unwrap();
+                println!("{} {}", freq.bold().bright_red(), msg);
+            }
+
+            if done_receiver.try_recv().is_ok() {
+                // All output has been received. Exit.
+                break;
+            }
+        }
+    });
+
+    // Spawn a background task to receive and send output to the screen.
+    let output_handler = tokio::spawn(async move {
+        while let Some(message) = output_receiver.recv().await {
+            screen_sender.send(message).unwrap();
+        }
+        // All output has been received. Send a message to the screen to exit.
+        done_sender.send(()).await.unwrap();
+    });
+
+    // Read lines from STDIN.
+    let mut lines = BufReader::new(io::stdin()).lines();
+    while let Some(line) = lines.next_line().await.unwrap() {
+        input_sender.send(line).await.unwrap();
+    }
+    // All input has been received close the input channel.
+    drop(input_sender);
+    // Wait for the output_handler to finish.
+    output_handler.await.unwrap();
+    // Wait for the screen to finish.
+    screen.await.unwrap();
 }
