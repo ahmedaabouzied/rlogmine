@@ -1,7 +1,5 @@
-use colored::Colorize;
 use std::fmt;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::time::{self, Duration};
 
 /// Default maximum distance between two messages in a cluster.
 const SCREEN_LINES: u64 = 8;
@@ -124,25 +122,10 @@ impl Clusters {
         output_sender: Sender<String>,
     ) {
         let output_sender = output_sender.clone();
-        let (watch_sender, watch_receiver) = tokio::sync::watch::channel("".to_string());
-
-        let mut interval = time::interval(Duration::from_secs(self.refresh_interval));
-        tokio::spawn(async move {
-            loop {
-                interval.tick().await;
-                let update = watch_receiver.borrow().clone();
-                match output_sender.send(update).await {
-                    Ok(_) => {}
-                    Err(_) => {
-                        break;
-                    }
-                }
-            }
-        });
         while let Some(message) = input_receiver.recv().await {
             self.process(message);
             self.sort();
-            match watch_sender.send(self.to_string()) {
+            match output_sender.send(self.to_string()).await {
                 Ok(_) => {}
                 Err(_) => {
                     break;

@@ -7,6 +7,7 @@ use crossterm::{
 use std::io::stdout as stdioout;
 use tokio::io::{self, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
+use tokio::time::{self, Duration};
 
 mod cluster;
 
@@ -53,7 +54,7 @@ struct Args {
     #[clap(
         short = 'i',
         long,
-        default_value = "4",
+        default_value = "0",
         help = "Screen output refresh interval in seconds"
     )]
     refresh_interval: u64,
@@ -72,23 +73,62 @@ async fn main() {
     // TODO: Asses the ideal capacity of the channels.
     let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);
     let (output_sender, mut output_receiver) = mpsc::channel::<String>(10);
+    let (screen_sender, mut screen_receiver) =
+        tokio::sync::watch::channel::<String>("".to_string());
+    let (done_sender, mut done_receiver) = mpsc::channel::<()>(1);
 
     // Spawn an async background task for the clusters.
     tokio::spawn(async move {
         clusters.start(&mut input_receiver, output_sender).await;
     });
 
+    if args.refresh_interval == 0 {
+        clear_terminal(&args).unwrap();
+        let output = tokio::spawn(async move {
+            let mut latest_output = String::new();
+            while let Some(output) = output_receiver.recv().await {
+                latest_output = output;
+            }
+            let lines = latest_output.lines();
+            for line in lines {
+                let (freq, msg) = line.split_once(",").unwrap();
+                println!("{} {}", freq.bold().bright_red(), msg);
+            }
+        });
+        // Read lines from STDIN.
+        let mut lines = BufReader::new(io::stdin()).lines();
+        while let Some(line) = lines.next_line().await.unwrap() {
+            input_sender.send(line).await.unwrap();
+        }
+        drop(input_sender);
+        output.await.unwrap();
+        return;
+    }
+
     // Spawn a background task to print output to the screen.
-    tokio::spawn(async move {
+    let screen = tokio::spawn(async move {
         let args = args.clone();
-        while let Some(message) = output_receiver.recv().await {
+        let mut interval = time::interval(Duration::from_secs(args.refresh_interval));
+        loop {
+            interval.tick().await;
+            let message = screen_receiver.borrow_and_update();
             clear_terminal(&args).unwrap();
             let lines = message.lines();
             for line in lines {
                 let (freq, msg) = line.split_once(",").unwrap();
                 println!("{} {}", freq.bold().bright_red(), msg);
             }
+            if done_receiver.try_recv().is_ok() {
+                break;
+            }
         }
+    });
+
+    let output_handler = tokio::spawn(async move {
+        while let Some(message) = output_receiver.recv().await {
+            screen_sender.send(message).unwrap();
+        }
+        done_sender.send(()).await.unwrap();
     });
 
     // Read lines from STDIN.
@@ -96,6 +136,9 @@ async fn main() {
     while let Some(line) = lines.next_line().await.unwrap() {
         input_sender.send(line).await.unwrap();
     }
+    drop(input_sender);
+    output_handler.await.unwrap();
+    screen.await.unwrap();
 }
 
 /// clear_terminal clears the terminal and print the current execution info as a header of
