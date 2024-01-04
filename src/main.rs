@@ -63,12 +63,8 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let mut clusters = cluster::Clusters::new(
-        args.max_distance,
-        args.min_frequency,
-        args.output_lines,
-        args.refresh_interval,
-    );
+    let mut clusters =
+        cluster::Clusters::new(args.max_distance, args.min_frequency, args.output_lines);
 
     // TODO: Asses the ideal capacity of the channels.
     let (input_sender, mut input_receiver) = mpsc::channel::<String>(10);

@@ -1,9 +1,6 @@
 use std::fmt;
 use tokio::sync::mpsc::{Receiver, Sender};
 
-/// Default maximum distance between two messages in a cluster.
-const SCREEN_LINES: u64 = 8;
-
 #[derive(Clone, Debug)]
 struct Cluster {
     /// Cluster representative parts message.
@@ -21,7 +18,7 @@ impl Cluster {
     fn new(r: &String, max_dist: f64) -> Cluster {
         let r = r.split(" ").map(|s| s.to_string()).collect::<Vec<String>>();
         Cluster {
-            r: r,
+            r,
             max_dist,
             count: 1,
         }
@@ -86,11 +83,9 @@ impl fmt::Display for Cluster {
 #[derive(Clone, Debug)]
 pub struct Clusters {
     list: Vec<Cluster>,
-
     max_dist: f64,
     min_freq: u64,
     output_lines: u64,
-    refresh_interval: u64,
 }
 
 impl fmt::Display for Clusters {
@@ -107,13 +102,12 @@ impl fmt::Display for Clusters {
 
 impl Clusters {
     /// Creates a new empty clusters list.
-    pub fn new(max_dist: f64, min_freq: u64, output_lines: u64, refresh_interval: u64) -> Clusters {
+    pub fn new(max_dist: f64, min_freq: u64, output_lines: u64) -> Clusters {
         Clusters {
             list: Vec::new(),
             max_dist,
             min_freq,
             output_lines,
-            refresh_interval,
         }
     }
     pub async fn start(
@@ -125,11 +119,8 @@ impl Clusters {
         while let Some(message) = input_receiver.recv().await {
             self.process(message);
             self.sort();
-            match output_sender.send(self.to_string()).await {
-                Ok(_) => {}
-                Err(_) => {
-                    break;
-                }
+            if let Err(_) = output_sender.send(self.to_string()).await {
+                break;
             }
         }
     }
@@ -158,9 +149,13 @@ impl Clusters {
 mod tests {
     use super::*;
 
+    const MAX_DIST: f64 = 0.5;
+    const MIN_FREQ: u64 = 1;
+    const OUTPUT_LINES: u64 = 10;
+
     #[test]
     fn test_score() {
-        let c = Cluster::new(&"".to_string());
+        let c = Cluster::new(&"".to_string(), MAX_DIST);
         let x = "a".to_string();
         let y = "a".to_string();
         let z = "b".to_string();
@@ -193,7 +188,7 @@ mod tests {
             .map(|s| s.to_string())
             .collect::<Vec<String>>();
 
-        let c = Cluster::new(&parts1.join(" "));
+        let c = Cluster::new(&parts1.join(" "), MAX_DIST);
 
         assert!(c.distance(&parts1, &parts2) < c.distance(&parts1, &parts3));
         assert!(c.distance(&parts3, &parts4) < c.distance(&parts3, &parts1));
@@ -224,7 +219,7 @@ mod tests {
             ));
         }
 
-        let mut c = Clusters::new();
+        let mut c = Clusters::new(MAX_DIST, MIN_FREQ, OUTPUT_LINES);
         for log in [&logs1[..], &logs2[..], &logs3[..]].concat() {
             c.process(log);
         }
